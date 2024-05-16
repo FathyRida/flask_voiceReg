@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Date Info</title>
+    <script src="https://unpkg.co/gsap@3/dist/gsap.min.js"></script>
+    <style>
+        body {
+            background-color: #000000;
+            overflow: hidden;
+            text-align:center;
+            display: flex;
+            align-items: center;
+            justify-content: center; 
+            color: whitesmoke;
+            }
+
+            body,
+            html {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            }
+
+            svg {
+            width: 100%;
+            height: 200%;
+            visibility: hidden;
+            
+            }
+
+            .ell, #ai {
+                fill: none;
+            }
+        #recordingSection, #barSection, #talkingIndicator {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 160%;
+            justify-content: center; align-items: center;
+        }
+
+        #recordingSection {
+            display: flex;
+        }
+
+        .recording_section {
+            display: flex;
+            justify-content: center; align-items: center;
+            height: 100%;
+            
+        }
+        #record-button {
+          border-radius: 60px;
+        }
+        #record-button:hover {
+          box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(126, 11, 11, 0.19);
+        }
+
+        #bars {
+            display: flex;
+            justify-content: center; align-items: center;
+        }
+
+        .bar {
+            background: #dca346;
+            height: 30px; width: 10px;
+            margin: 0 4px;
+            border-radius: 5px;
+            animation: sound 0ms -600ms linear infinite alternate;
+        }
+        @keyframes sound {
+            0% {
+                opacity: .35;
+                height: 20px; 
+            }
+            100% {
+                opacity: 1;       
+                height: 70px;        
+            }
+        }
+
+        .bar:nth-child(1)  { left: 1px; animation-duration: 474ms; }
+        .bar:nth-child(2)  { left: 15px; animation-duration: 433ms; }
+        .bar:nth-child(3)  { left: 29px; animation-duration: 407ms; }
+        .bar:nth-child(4)  { left: 43px; animation-duration: 458ms; }
+        .bar:nth-child(5)  { left: 57px; animation-duration: 400ms; }
+        .bar:nth-child(6)  { left: 71px; animation-duration: 427ms; }
+        .bar:nth-child(7)  { left: 85px; animation-duration: 441ms; }
+        .bar:nth-child(8)  { left: 99px; animation-duration: 419ms; }
+        .bar:nth-child(9)  { left: 113px; animation-duration: 487ms; }
+        .bar:nth-child(10) { left: 127px; animation-duration: 442ms; }
+
+
+         #talkingIndicator {
+            display: none;
+        } 
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+         .container {
+            display: grid;
+            place-items: center;
+            height: 100%;
+        } 
+        .title {
+          position: absolute;
+          top: 50px;
+        }
+    </style>
+
+    <style>
+body {
+  font-family: 'Lato', sans-serif;
+  color: #fff;
+  background: #000;
+}
+
+.black-box {
+  background: #333;
+  width: 328px;
+}
+
+.black-box img,
+.black-box > div {
+  float: left;
+  display: inlne-block;
+}
+
+.black-box > div {
+  width: 164px;
+  height: 164px;
+  background: #333;
+  position: relative;
+}
+
+.black-box div div {
+  background: #333;
+  outline: 1px solid #fff;
+  top: 50%;
+}
+
+.black-box p {
+  text-transform: uppercase;
+  border-bottom: 1px solid #fff;
+}
+
+.black-box p:last-of-type {
+  border-bottom: none;
+}
+
+.toc-block ul li {
+  display: block;
+  float: left;
+  width: 220px;
+  padding: 15px 15px 15px 15px;
+  border-top: 1px solid #fff;
+  border-right: 1px solid #fff;
+}
+
+.toc-block p {
+  margin-bottom: 10px;
+  color: #999;
+}
+
+.toc-block h3 {
+  text-transform: uppercase;
+}
+
+.toc-block .page-number {
+  font-size: 25px;
+}
+
+.toc-block p.page-number {
+  margin-bottom: 5px;
+}
+
+.toc-block .author {
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.page-top-accent {
+  padding-bottom: 5px;
+  border-bottom: 1px solid #fff;
+}
+.page-top-accent > h1 {
+  color : #999999;
+}
+
+.page-top-accent ul {
+  list-style: none;
+  text-align: right;
+}
+
+.page-top-accent ul li {
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  display: inline-block;
+  padding: 10px 15px;
+  border-right: 1px solid #fff;
+}
+
+.page-top-accent ul li:last-of-type {
+  border-right: none;
+}
+
+.page-top-accent ul li:first-of-type ,
+.page-top-accent ul li:last-of-type {
+  color: #999;
+}
+
+.fa-camera:before {
+  content: "\f030";
+}
+.wrap {
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+    </style>
+</head>
+<body>
+  <link href="https://netdna.bootstrapcdn.com/font-awesome/3.1.1/css/font-awesome.css" rel="stylesheet">
+
+<div class="wrap">
+  <section class="divider">
+    <div class="page-top-accent">
+      <ul>
+        <li><i class="fa fa-camera"></i> Project de fin d'etude</li>
+        <li>Features 0.1</li>
+        <li>004</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="divider">
+    <div class="toc-block">
+      <ul>
+        <li><p class="page-number">93</p><h3>FATHI Meryem</h3><p>.</p><p class="author">By me</p></li>
+        <li><p class="page-number">14</p><h3>NIDAL </h3><p>.</p><p class="author">By me</p></li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+  <div class="title">
+    <section>
+      <div class="page-top-accent">
+          <h1 class="author">&hearts;EVA Voice Assistant &hearts;</h1>
+      </div>
+    </section>
+  </div>
+  
+
+    <svg id="mainSVG" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+        <defs>
+    
+            <linearGradient id="aiGrad" x1="513.98" y1="290" x2="479.72" y2="320" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#000" stop-opacity="0" />
+                <stop offset=".15" stop-color="#EF476F" />
+                <stop offset=".4" stop-color="#359eee" />
+                <stop offset=".6" stop-color="#03cea4" />
+                <stop offset=".78" stop-color="#FFC43D" />
+                <stop offset="1" stop-color="#000" stop-opacity="0" />
+            </linearGradient>
+    
+        </defs>
+    
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <ellipse class="ell" cx="400" cy="300" rx="80" ry="80" />
+        <path id="ai" opacity=0.85 d="m417.17,323.85h-34.34c-3.69,0-6.67-2.99-6.67-6.67v-34.34c0-3.69,2.99-6.67,6.67-6.67h34.34c3.69,0,6.67,2.99,6.67,6.67v34.34c0,3.69-2.99,6.67-6.67,6.67Zm-5.25-12.92v-21.85c0-.55-.45-1-1-1h-21.85c-.55,0-1,.45-1,1v21.85c0,.55.45,1,1,1h21.85c.55,0,1-.45,1-1Zm23.08-16.29h-11.15m-47.69,0h-11.15m70,10.73h-11.15m-47.69,0h-11.15m40.37,29.63v-11.15m0-47.69v-11.15m-10.73,70v-11.15m0-47.69v-11.15" stroke="url(#aiGrad)" stroke-linecap="round" stroke-miterlimit="10" stroke-width="2" />
+    </svg>
+    <div class="container">
+        <div class="recording_section" id="recordingSection">
+            <img src="{{ url_for('static', filename='images/voiceRecorder1.png') }}"
+                 alt="voice recorder" width="60" height="60"
+                 onclick="startRecording()" id="record-button">
+        </div>
+    </div>
+
+    <div class="bar_section" id="barSection" onclick="stopRecording()">
+        <div id="bars">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+            <div class="bar"></div>
+        </div>
+    </div>
+
+    <!-- <div class="talking-indicator" id="talkingIndicator"></div> -->
+    <div class="talking-indicator" id="talkingIndicator">
+        <img src="{{ url_for('static', filename='images/giphy.gif') }}">
+    </div>
+</body>
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        document.getElementById('recordingSection').style.display = 'flex'; // Show initially
+
+    
+
+        function startRecording() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.start();
+                audioChunks = [];
+                document.getElementById('recordingSection').style.display = 'none'; // Hide record button
+                document.getElementById('barSection').style.display = 'flex'; // Show bars
+
+                mediaRecorder.addEventListener("dataavailable", event => {
+                    audioChunks.push(event.data);
+                });
+            }).catch(error => console.error("Error accessing media devices.", error));
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            document.getElementById('recordingSection').style.display = 'none'; 
+            document.getElementById('barSection').style.display = 'none';
+            // document.getElementById('barSection').style.display = 'none';
+            // document.getElementById('talkingIndicator').style.display = 'block';
+
+
+            mediaRecorder.addEventListener("stop", () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                // const audioUrl = URL.createObjectURL(audioBlob);
+                // const audio = new Audio(audioUrl);
+                // audio.play();
+              
+                sendAudioToServer(audioBlob);
+                audioChunks = [];
+            });
+        }
+
+        function sendAudioToServer(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio', audioBlob);
+
+            fetch('/process-audio', {
+                method: 'POST',
+                body: formData,
+            })
+            .then(response => response.blob())
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                audio.play();
+
+                document.getElementById('barSection').style.display = 'flex'; 
+                audio.onended = () => {
+                  document.getElementById('barSection').style.display = 'none'; 
+                    document.getElementById('recordingSection').style.display = 'flex'; 
+                };
+            })
+            .catch(error => console.error("Error sending audio to Flask:", error));
+        }
+    </script>
+<script>
+    "use strict";
+  
+  gsap.config({
+    trialWarn: false
+  });
+  var select = function select(s) {
+      return document.querySelector(s);
+    },
+    toArray = function toArray(s) {
+      return gsap.utils.toArray(s);
+    },
+    mainSVG = select("#mainSVG"),
+    allEll = toArray(".ell"),
+    colorArr = ["#359EEE", "#FFC43D", "#EF476F", "#03CEA4"];
+  var colorInterp = gsap.utils.interpolate(colorArr);
+  gsap.set(mainSVG, {
+    visibility: "visible"
+  });
+  function animate(el, count) {
+    var tl = gsap.timeline({
+      defaults: {
+        ease: "sine.inOut"
+      },
+      repeat: -1
+    });
+    gsap.set(el, {
+      opacity: 1 - count / allEll.length,
+      stroke: colorInterp(count / allEll.length)
+    });
+    tl.to(el, {
+      attr: {
+        ry: "-=".concat(count * 2.3),
+        rx: "+=".concat(count * 1.4)
+      },
+      ease: "sine.in"
+    }).to(el, {
+      attr: {
+        ry: "+=".concat(count * 2.3),
+        rx: "-=".concat(count * 1.4)
+      },
+      ease: "sine"
+    }).to(el, {
+      duration: 1,
+      rotation: -180,
+      transformOrigin: "50% 50%"
+    }, 0).timeScale(0.5);
+  }
+  allEll.forEach(function (c, i) {
+    gsap.delayedCall(i / (allEll.length - 1), animate, [c, i + 1]);
+  });
+  gsap.to("#aiGrad", {
+    duration: 4,
+    delay: 0.75,
+    attr: {
+      x1: "-=300",
+      x2: "-=300"
+    },
+    scale: 1.2,
+    transformOrigin: "50% 50%",
+    repeat: -1,
+    ease: "none"
+  });
+  gsap.to("#ai", {
+    duration: 1,
+    scale: 1.1,
+    transformOrigin: "50% 50%",
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut"
+  });
+  </script>
+</html>
