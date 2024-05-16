@@ -44,27 +44,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 MODEL = "gpt-3.5-turbo"
 
-# Définition de la fonction pour gérer les commandes textuelles
-def handle_command(text):
-    """Gère les commandes basées sur le texte entré par l'utilisateur."""
-    # Analyse et réponse en fonction du contenu du texte
-    if "présente-toi" in text:
-        return "D'accord, je suis EVA une assistante vocale développée par Maryam et Nidal. Je suis ici pour vous aider à obtenir des informations. Je peux vous informer sur la météo, l'heure et date, répondre à vos questions grâce à l'intelligence artificielle. N'hésitez pas à me demander de l'aide à tout moment!"
-    elif "au revoir" in text:
-        return "Au revoir!"
-    elif "bonjour" in text:
-        return "Bonjour, je suis votre assistante vocale. Comment je peux vous aider aujourd'hui?"
-    elif "date" in text and "heure" in text:
-        return "Il est " + datetime.datetime.now().strftime("%H:%M") + " le " + datetime.datetime.now().strftime("%d %B %Y")
-    elif "date" in text:
-        return "Nous sommes le " + datetime.datetime.now().strftime("%d %B %Y")
-    elif "heure" in text:
-        return "Il est " + datetime.datetime.now().strftime("%H:%M")
-    elif "météo" in text:
-        return "Pour quelle ville souhaitez-vous connaître la météo ?"
-    else:
-        return "Je n'ai pas compris votre demande."
-
 # Fonction pour obtenir la météo d'une ville spécifique
 def get_weather(city_name):
     """Interroge l'API OpenWeatherMap pour obtenir des informations météorologiques pour une ville donnée."""
@@ -97,6 +76,7 @@ def get_current_date():
     today = datetime.date.today()
     return "Aujourd'hui c'est " + today.strftime("%d %B %Y")
     
+# Fonction pour obtenir l'heure
 def get_current_time():
     """Returns the current time formatted."""
     return datetime.datetime.now().strftime("%H:%M")
@@ -105,30 +85,6 @@ def get_current_time():
 @app.route('/')
 def index():
     return render_template('index.html')
-
-# Route pour obtenir la date actuelle et la retourner sous forme de discours
-@app.route('/get-date-speech', methods=['GET'])
-def fetch_date_speech():
-    date_info = get_current_date()
-    audio_file_path = text_to_speech(date_info)
-    return send_file(audio_file_path, as_attachment=True, mimetype='audio/mp3')
-
-# Route pour obtenir la météo basée sur une requête POST contenant le nom de la ville
-@app.route('/get-weather', methods=['POST'])
-def web_get_weather():
-    data = request.json
-    city_name = data.get('city_name')
-    if city_name:
-        weather_info = get_weather(city_name)
-        return jsonify({'weather_info': weather_info})
-    else:
-        return jsonify({'error': 'No city provided'}), 400
-
-# Route pour obtenir la date actuelle et la retourner en JSON
-@app.route('/get-date', methods=['GET'])
-def fetch_date():
-    date_info = get_current_date()
-    return jsonify({'date_info': date_info})
 
 # Route pour traiter l'audio envoyé, reconnaître le discours, et répondre en conséquence
 @app.route('/process-audio', methods=['POST'])
@@ -187,7 +143,7 @@ def generate_response(input_text, context):
     elif "au revoir" in input_text:
         return "Au revoir!", None
     elif "merci" in input_text:
-        return "avec plaisir n#hesite pas a pose d'autres questiones", None
+        return "avec plaisir n'hesite pas a pose d'autres questiones", None
     elif "bonjour" in input_text:
         return "Bonjour, je suis votre assistante vocale. Comment puis-je vous aider aujourd'hui ?", None
     elif "date" in input_text and "heure" in input_text:
@@ -225,11 +181,6 @@ def process_question(question):
         print(f"Error: {e}")
         return "j'ai rencontré une erreur lors du traitement de votre demande."
 
- 
-
-
-
 if __name__ == '__main__':
     app.run()
     # app.run(debug=True,host='0.0.0.0')
-
