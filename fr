@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""
+vault_versions.py — Inspect HashiCorp Vault KV v2 key versions.
+
+Capabilities:
+  1. list   : list ALL versions of a key with their status
+              (active / soft-deleted / destroyed)
+  2. get    : retrieve a SPECIFIC version (or the latest) with its data
+  3. info   : dump ALL metadata for the key (and per-version details)
+
+A "version" can be in one of these states:
+  - active      : live, readable secret data
+  - soft-delete : `vault kv delete` was run -> reversible with `undelete`,
+                  data is hidden but recoverable, deletion_time is set
+  - hard-delete : `vault kv destroy` was run -> permanent, destroyed=true,
+                  data is gone forever
+
+Install:
+    pip install hvac
+
+Usage:
+    export VAULT_ADDR="https://vault.example.com"
+    export VAULT_TOKEN="hvs.xxxxx"
+
+    python3 vault_versions.py list   secret/ma-cle
+    python3 vault_versions.py get    secret/ma-cle           # latest
+    python3 vault_versions.py get    secret/ma-cle 3         # version 3
+    python3 vault_versions.py info   secret/ma-cle
+"""
+
+import os
+import sys
+import hvac
+
+# --------------------------------------------------------------------------- #
+# Configuration
+# --------------------------------------------------------------------------- #
+# If your KV v2 engine is mounted somewhere other than "secret", change this,
+# or pass paths like "kv/ma-cle" and set MOUNT accordingly.
+MOUNT = os.environ.get("VAULT_KV_MOUNT", "secret")
+
+client = hvac.Client(
+    url=os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200"),
+    token=os.environ.get("VAULT_TOKEN"),
+)
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+def _key(path):
+    """Strip the mount prefix from a path: 'secret/ma-cle' -> 'ma-cle'."""
+    if "/" in path:
+        prefix, rest = path.split("/", 1)
+        # Allow user to pass either 'secret/ma-cle' or just 'ma-cle'
+        return rest if prefix == MOUNT else path
+    return path
+
+
+def version_status(meta):
+    """
+    Determine the status of a single version from its metadata dict.
+
+    Vault returns, per version:
+      - destroyed      : bool   -> hard delete (destroy)
+      - deletion_time  : str    -> non-empty means soft delete (delete)
+      - created_time   : str
+    """
+    if meta.get("destroyed"):
+        return "hard-delete (destroyed)"
+    if meta.get("deletion_time"):
+        return "soft-delete (deleted)"
+    return "active"
+
+
+def _check_auth():
+    if not client.is_authenticated():
+        sys.exit("Authentication failed. Check VAULT_ADDR and VAULT_TOKEN.")
+
+
+# --------------------------------------------------------------------------- #
+# Commands
+# --------------------------------------------------------------------------- #
+def cmd_list(path):
+    """List every version of the key with its status."""
+    key = _key(path)
+    md = client.secrets.kv.v2.read_secret_metadata(path=key, mount_point=MOUNT)
+    data = md["data"]
+    versions = data.get("versions", {})
+
+    print(f"\nKey: {MOUNT}/{key}")
+    print(f"Current version: {data.get('current_version')}")
+    print(f"Oldest version:  {data.get('oldest_version')}")
+    print(f"Max versions:    {data.get('max_versions')}")
+    print("-" * 78)
+    print(f"{'VER':>4}  {'STATUS':<26} {'CREATED':<28} DELETION_TIME")
+    print("-" * 78)
+
+    for ver in sorted(versions, key=int):
+        info = versions[ver]
+        status = version_status(info)
+        created = info.get("created_time", "") or "-"
+        deleted = info.get("deletion_time", "") or "-"
+        print(f"{ver:>4}  {status:<26} {created:<28} {deleted}")
+    print("-" * 78)
+    print(f"Total: {len(versions)} version(s)\n")
+
+
+def cmd_get(path, version=None):
+    """Retrieve a specific version (or latest) and show its data + status."""
+    key = _key(path)
+
+    # First read metadata so we can report status even if data is hidden.
+    md = client.secrets.kv.v2.read_secret_metadata(path=key, mount_point=MOUNT)
+    versions = md["data"].get("versions", {})
+
+    if version is None:
+        version = md["data"].get("current_version")
+    version = int(version)
+
+    vmeta = versions.get(str(version))
+    if vmeta is None:
+        sys.exit(f"Version {version} does not exist for {MOUNT}/{key}.")
+
+    status = version_status(vmeta)
+
+    print(f"\nKey:     {MOUNT}/{key}")
+    print(f"Version: {version}")
+    print(f"Status:  {status}")
+    print(f"Created: {vmeta.get('created_time', '-')}")
+    if vmeta.get("deletion_time"):
+        print(f"Deleted: {vmeta.get('deletion_time')}")
+    print("-" * 78)
+
+    if "hard-delete" in status:
+        print("Data is permanently destroyed and cannot be retrieved.\n")
+        return
+    if "soft-delete" in status:
+        print("Version is soft-deleted. Data is hidden.")
+        print(f"Recover with: vault kv undelete -versions={version} {MOUNT}/{key}\n")
+        return
+
+    # Active -> fetch the actual secret data
+    secret = client.secrets.kv.v2.read_secret_version(
+        path=key, version=version, mount_point=MOUNT, raise_on_deleted_version=False
+    )
+    payload = secret["data"]["data"]
+    print("Data:")
+    for k, v in payload.items():
+        print(f"  {k} = {v}")
+    print()
+
+
+def cmd_info(path):
+    """Dump full metadata for the key, including custom_metadata."""
+    key = _key(path)
+    md = client.secrets.kv.v2.read_secret_metadata(path=key, mount_point=MOUNT)
+    data = md["data"]
+
+    print(f"\nKey: {MOUNT}/{key}")
+    print("-" * 78)
+    print(f"created_time      : {data.get('created_time')}")
+    print(f"updated_time      : {data.get('updated_time')}")
+    print(f"current_version   : {data.get('current_version')}")
+    print(f"oldest_version    : {data.get('oldest_version')}")
+    print(f"max_versions      : {data.get('max_versions')}")
+    print(f"cas_required      : {data.get('cas_required')}")
+    print(f"delete_version_after : {data.get('delete_version_after')}")
+
+    custom = data.get("custom_metadata") or {}
+    print("\ncustom_metadata:")
+    if custom:
+        for k, v in custom.items():
+            print(f"  {k} = {v}")
+    else:
+        print("  (none)")
+
+    versions = data.get("versions", {})
+    print(f"\nversions ({len(versions)}):")
+    for ver in sorted(versions, key=int):
+        info = versions[ver]
+        print(f"  v{ver}: {version_status(info)}  (created {info.get('created_time')})")
+    print()
+
+
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
+def main():
+    if len(sys.argv) < 3:
+        print(__doc__)
+        sys.exit(1)
+
+    _check_auth()
+
+    cmd = sys.argv[1]
+    path = sys.argv[2]
+    extra = sys.argv[3:]
+
+    try:
+        if cmd == "list":
+            cmd_list(path)
+        elif cmd == "get":
+            cmd_get(path, extra[0] if extra else None)
+        elif cmd == "info":
+            cmd_info(path)
+        else:
+            sys.exit(f"Unknown command: {cmd}. Use list | get | info.")
+    except hvac.exceptions.InvalidPath:
+        sys.exit(f"Path not found: {MOUNT}/{_key(path)} (does the key exist?)")
+    except hvac.exceptions.Forbidden:
+        sys.exit("Permission denied. Your token lacks rights on this path.")
+
+
+if __name__ == "__main__":
+    main()
