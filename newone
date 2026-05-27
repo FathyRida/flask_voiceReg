@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#
+# vault_get.sh
+#
+# Fetches the current value of one or more Vault secrets (KV v2).
+#
+# Requirements: curl and jq
+#
+# Usage:
+#   export VAULT_ADDR="https://vault.example.com"
+#   export VAULT_TOKEN="hvs.xxxxx"
+#
+#   # One or more paths as arguments
+#   ./vault_get.sh secret/my-key
+#   ./vault_get.sh secret/my-key secret/app/prod/db
+#
+#   # A list of paths from a file (one per line)
+#   ./vault_get.sh --file paths.txt
+
+set -euo pipefail
+
+VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
+VAULT_TOKEN="${VAULT_TOKEN:-}"
+
+if [[ -z "$VAULT_TOKEN" ]]; then
+  echo "Error: VAULT_TOKEN is not set." >&2
+  exit 1
+fi
+
+usage() {
+  echo "Usage:" >&2
+  echo "  $0 <mount/key> [<mount/key> ...]" >&2
+  echo "  $0 --file <file>   # one path per line" >&2
+  exit 1
+}
+
+[[ $# -lt 1 ]] && usage
+
+# --- Build the list of paths ---
+PATHS=()
+
+if [[ "$1" == "--file" ]]; then
+  [[ $# -ne 2 ]] && usage
+  FILE="$2"
+  [[ ! -r "$FILE" ]] && { echo "Error: file is not readable: $FILE" >&2; exit 1; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # skip blank lines and comments (#)
+    line="$(echo "$line" | sed 's/[[:space:]]*$//')"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    PATHS+=("$line")
+  done < "$FILE"
+else
+  PATHS=("$@")
+fi
+
+[[ ${#PATHS[@]} -eq 0 ]] && { echo "No path to process." >&2; exit 1; }
+
+# --- Fetch the current value for a single path ---
+get_current() {
+  local full_path="$1"
+  local mount key data_url
+
+  mount="${full_path%%/*}"
+  key="${full_path#*/}"
+
+  if [[ "$mount" == "$key" ]]; then
+    echo "  [ERROR] invalid path (expected <mount>/<key>): $full_path" >&2
+    return 1
+  fi
+
+  data_url="${VAULT_ADDR}/v1/${mount}/data/${key}"
+
+  # --fail returns a non-zero exit code on HTTP >= 400 (404, 403, etc.)
+  if ! resp="$(curl -sS --fail \
+        -H "X-Vault-Token: ${VAULT_TOKEN}" \
+        "$data_url" 2>/dev/null)"; then
+    echo "  [ERROR] could not read (missing path or access denied): $full_path" >&2
+    return 1
+  fi
+
+  echo "=== ${full_path} ==="
+  echo "$resp" | jq '.data.data'
+  echo
+}
+
+# --- Loop over all paths ---
+rc=0
+for p in "${PATHS[@]}"; do
+  get_current "$p" || rc=1
+done
+
+exit "$rc"
