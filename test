@@ -1,0 +1,328 @@
+#!/bin/bash
+
+################################################################################
+# hvault.sh - Vault Oracle Credentials Management Script
+#
+# FINAL PRODUCTION VERSION
+#
+# Purpose:
+#   Fetch Oracle database credentials from HashiCorp Vault
+#   Replace hardcoded passwords in .prm files with Vault secrets
+#
+# Usage:
+#   ./hvault.sh -c CONFIG_FILE [-b BASE_PATH] [-f FORMAT]
+#
+# Examples:
+#   eval "$(./hvault.sh -c vault_instances.conf)"
+#   eval "$(./hvault.sh -b oracle/prod -c vault_instances.conf)"
+#   ./hvault.sh -c vault_instances.conf -f prm > oracle.prm
+#
+# Environment Variables:
+#   VAULT_ADDR       Vault server URL (required)
+#   VAULT_TOKEN      Vault authentication token (required)
+#   VAULT_NAMESPACE  Vault namespace (required)
+#   VAULT_SKIP_VERIFY Set to "true" to skip TLS verification (optional)
+#   MOUNT            Vault mount point (default: cloud)
+#   BASE_PATH        Vault base path (default: oracle/qua)
+#
+################################################################################
+
+set -euo pipefail
+
+# ============================================================================
+# CONFIGURATION & DEFAULTS
+# ============================================================================
+
+VAULT_ADDR="${VAULT_ADDR:-}"
+VAULT_TOKEN="${VAULT_TOKEN:-}"
+VAULT_NAMESPACE="${VAULT_NAMESPACE:-}"
+VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-false}"
+
+MOUNT="cloud"                    # Vault mount point (can be overridden)
+BASE_PATH="oracle/qua"           # Vault base path (can be overridden with -b)
+CONF_FILE=""                     # Config file path (required)
+OUTPUT_FORMAT="export"           # Output format: export, prm, or json
+
+# ============================================================================
+# FUNCTIONS
+# ============================================================================
+
+error() {
+    echo "[ERROR] $*" >&2
+    exit 1
+}
+
+info() {
+    echo "[INFO] $*" >&2
+}
+
+debug() {
+    if [ "${DEBUG:-0}" = "1" ]; then
+        echo "[DEBUG] $*" >&2
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+hvault.sh - Vault Oracle Credentials Management Script
+
+USAGE:
+  ./hvault.sh -c CONFIG_FILE [-b BASE_PATH] [-f FORMAT]
+
+OPTIONS:
+  -c, --config FILE       Config file with instance list (REQUIRED)
+                          Format: ENV/INSTANCE (one per line)
+                          Example: Q0015185/DYNATRACE
+
+  -b, --base-path PATH    Base path in Vault (default: oracle/qua)
+                          Examples:
+                            oracle/qua   (QA/Test environment)
+                            oracle/prod  (Production environment)
+                            oracle/dev   (Development environment)
+
+  -f, --format FORMAT     Output format (default: export)
+                          Options:
+                            export   Shell variables (sourcing)
+                            prm      .prm file format
+                            json     JSON format
+
+  -h, --help              Show this help message
+
+ENVIRONMENT VARIABLES (REQUIRED):
+  VAULT_ADDR              Vault server URL
+                          Example: https://hvault-a.staging.echonet.net.intra
+  
+  VAULT_TOKEN             Vault authentication token
+                          Example: hvs.CAA...
+  
+  VAULT_NAMESPACE         Vault namespace
+                          Example: AP11436
+
+ENVIRONMENT VARIABLES (OPTIONAL):
+  VAULT_SKIP_VERIFY       Set to "true" to skip TLS verification
+                          Default: false
+
+EXAMPLES:
+
+  # QA environment (default)
+  eval "$(./hvault.sh -c vault_instances.conf)"
+
+  # Production environment
+  eval "$(./hvault.sh -b oracle/prod -c vault_instances.conf)"
+
+  # Generate .prm file
+  ./hvault.sh -c vault_instances.conf -f prm > oracle.prm
+
+  # JSON output
+  ./hvault.sh -c vault_instances.conf -f json
+
+CONFIG FILE FORMAT:
+
+  # vault_instances.conf
+  Q0015185/DYNATRACE
+  Q0015185/OWN_AP11436
+  Q001518C/DYNATRACE
+
+VAULT DATA STRUCTURE:
+
+  Vault Path: /v1/{NAMESPACE}/{MOUNT}/data/{BASE_PATH}/{ENV}/{INSTANCE}
+  
+  Example:
+    /v1/AP11436/cloud/data/oracle/qua/Q0015185/DYNATRACE
+
+  Secret fields extracted:
+    - username
+    - password
+    - pdb (database name)
+    - service (Oracle service name)
+    - dns_aliases (host/port)
+    - port_tcp (TCP port)
+
+OUTPUT FORMATS:
+
+  export format (default):
+    oracle_DYNATRACE='WAREHOUSE/DYNATRACE/"password"@SERVICE'
+    instance_DYNATRACE='Q0015185P10'
+    dns_DYNATRACE='hostname:1521'
+
+  prm format:
+    #connection DYNATRACE
+    oracle_DYNATRACE=WAREHOUSE/DYNATRACE/"password"@***
+    instance_DYNATRACE:Q0015185P10
+
+  json format:
+    {"instance": "DYNATRACE", "env": "Q0015185", "pdb": "WAREHOUSE", ...}
+
+EOF
+    exit 0
+}
+
+# ============================================================================
+# ARGUMENT PARSING
+# ============================================================================
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -c|--config)
+            shift
+            CONF_FILE="$1"
+            ;;
+        -b|--base-path)
+            shift
+            BASE_PATH="$1"
+            ;;
+        -f|--format)
+            shift
+            OUTPUT_FORMAT="$1"
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+    shift
+done
+
+# ============================================================================
+# VALIDATION
+# ============================================================================
+
+[ -z "$VAULT_ADDR" ] && error "VAULT_ADDR environment variable not set"
+[ -z "$VAULT_TOKEN" ] && error "VAULT_TOKEN environment variable not set"
+[ -z "$VAULT_NAMESPACE" ] && error "VAULT_NAMESPACE environment variable not set"
+[ -z "$CONF_FILE" ] && error "Config file (-c) is required"
+[ ! -f "$CONF_FILE" ] && error "Config file not found: $CONF_FILE"
+
+debug "VAULT_ADDR: $VAULT_ADDR"
+debug "VAULT_TOKEN: ${VAULT_TOKEN:0:20}..."
+debug "VAULT_NAMESPACE: $VAULT_NAMESPACE"
+debug "MOUNT: $MOUNT"
+debug "BASE_PATH: $BASE_PATH"
+debug "CONF_FILE: $CONF_FILE"
+debug "OUTPUT_FORMAT: $OUTPUT_FORMAT"
+
+# ============================================================================
+# MAIN PROCESSING LOOP
+# ============================================================================
+
+line_number=0
+error_count=0
+success_count=0
+
+while IFS= read -r line; do
+    ((line_number++))
+    
+    # Skip empty lines and comments
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    
+    # Trim whitespace
+    line=$(echo "$line" | xargs)
+    
+    # Parse config format: ENV/INSTANCE
+    # Example: Q0015185/DYNATRACE
+    
+    if [[ ! "$line" =~ / ]]; then
+        echo "[ERROR] Line $line_number: Invalid format '$line' (expected ENV/INSTANCE)" >&2
+        ((error_count++))
+        continue
+    fi
+    
+    IFS='/' read -r env instance <<< "$line"
+    
+    if [[ -z "$env" ]] || [[ -z "$instance" ]]; then
+        echo "[ERROR] Line $line_number: Invalid format '$line' (expected ENV/INSTANCE)" >&2
+        ((error_count++))
+        continue
+    fi
+    
+    # Build full Vault path
+    full_path="${MOUNT}/${BASE_PATH}/${env}/${instance}"
+    mount="${MOUNT}"
+    key="${BASE_PATH}/${env}/${instance}"
+    
+    # Build Vault API URL
+    # Format: /v1/{NAMESPACE}/{MOUNT}/data/{BASE_PATH}/{ENV}/{INSTANCE}
+    data_url="${VAULT_ADDR}/v1/${VAULT_NAMESPACE}/${mount}/data/${key}"
+    
+    debug "Fetching: $full_path"
+    debug "URL: $data_url"
+    
+    # Prepare curl options
+    curl_opts=(-sS --fail)
+    [ "$VAULT_SKIP_VERIFY" = true ] && curl_opts+=(-k)
+    
+    # Fetch from Vault
+    if resp=$(curl "${curl_opts[@]}" \
+        -H "X-Vault-Token: ${VAULT_TOKEN}" \
+        "$data_url" 2>/dev/null); then
+        
+        # Extract secret data
+        secret_data=$(echo "$resp" | jq '.data.data' 2>/dev/null)
+        
+        if [ -z "$secret_data" ] || [ "$secret_data" = "null" ]; then
+            echo "[ERROR] Line $line_number: No data in response for $instance" >&2
+            ((error_count++))
+            continue
+        fi
+        
+        # Extract credential fields from Vault
+        username=$(echo "$secret_data" | jq -r '.username // "UNKNOWN"')
+        password=$(echo "$secret_data" | jq -r '.password // "UNKNOWN"')
+        pdb=$(echo "$secret_data" | jq -r '.pdb // "UNKNOWN"')
+        service=$(echo "$secret_data" | jq -r '.service // "UNKNOWN"')
+        dns=$(echo "$secret_data" | jq -r '.dns_aliases[0] // "UNKNOWN"')
+        port=$(echo "$secret_data" | jq -r '.port_tcp // 1521')
+        
+        # Use instance name as variable suffix
+        var_name="${instance}"
+        
+        debug "Success: $instance (user=$username, pdb=$pdb)"
+        ((success_count++))
+        
+        # Output in selected format
+        case "$OUTPUT_FORMAT" in
+            export)
+                # Shell export variables (eval-able)
+                # Format: export oracle_INSTANCE='PDB/USERNAME/"PASSWORD"@SERVICE'
+                echo "export oracle_${var_name}='${pdb}/${username}/\"${password}\"@${service}'"
+                echo "export instance_${var_name}='${pdb}P10'"
+                echo "export dns_${var_name}='${dns}:${port}'"
+                ;;
+            prm)
+                # .prm file format (for grep-based parsing)
+                echo "#connection ${var_name}"
+                echo "oracle_${var_name}=${pdb}/${username}/***"
+                echo "instance_${var_name}:${pdb}P10"
+                echo ""
+                ;;
+            json)
+                # JSON format (for automation)
+                echo "{\"instance\": \"${var_name}\", \"env\": \"${env}\", \"username\": \"${username}\", \"pdb\": \"${pdb}\", \"service\": \"${service}\", \"dns\": \"${dns}\", \"port\": ${port}}"
+                ;;
+            *)
+                error "Unknown output format: $OUTPUT_FORMAT"
+                ;;
+        esac
+        
+    else
+        echo "[ERROR] Line $line_number: Failed to fetch $instance from $BASE_PATH/$env (mount: $MOUNT)" >&2
+        ((error_count++))
+    fi
+    
+done < "$CONF_FILE"
+
+# ============================================================================
+# SUMMARY
+# ============================================================================
+
+debug "Processing complete: $success_count success, $error_count errors"
+
+if [ $error_count -gt 0 ]; then
+    echo "[WARNING] $error_count errors occurred (see above)" >&2
+    exit 1
+fi
+
+exit 0
