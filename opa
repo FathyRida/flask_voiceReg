@@ -1,21 +1,14 @@
 #!/bin/bash
 
 ################################################################################
-# hvault_v3.sh - Smart Block Processor
+# hvault_final.sh
+# 
+# Creates EXACT output format:
+# oracle_name=PATH/""PASSWORD""
+# instance_name:INSTANCENAME
 #
-# Preserves EXACT file structure:
-#   #comment
-#   oracle_name=path/PLACEHOLDER
-#   instance_name:INSTANCENAME
-#   (empty line)
-#
-# Process:
-# 1. Read instance mapping line
-# 2. Extract instance name
-# 3. Fetch password from Vault
-# 4. Inject password into connection line
-# 5. Output entire block (all 3-4 lines) with password injected
-# 6. Move to next block
+# NO placeholder replacement, just inject password with quotes
+# NO empty lines between connections
 ################################################################################
 
 set -euo pipefail
@@ -28,8 +21,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Counters
-BLOCKS_PROCESSED=0
-BLOCKS_FAILED=0
+SUCCESS_COUNT=0
+FAIL_COUNT=0
 
 # Configuration
 VAULT_ADDR="${VAULT_ADDR:-}"
@@ -38,7 +31,7 @@ VAULT_NAMESPACE="${VAULT_NAMESPACE:-AP11436}"
 VAULT_SKIP_VERIFY="${VAULT_SKIP_VERIFY:-false}"
 MOUNT="cloud"
 BASE_PATH="oracle/qua"
-STATIC_CONN_FILE=""
+INPUT_FILE=""
 
 # Debug mode
 DEBUG="${DEBUG:-false}"
@@ -71,10 +64,10 @@ log_debug() {
 
 usage() {
     cat <<EOF
-Usage: $0 -s STATIC_CONN_FILE [OPTIONS]
+Usage: $0 -i INPUT_FILE [OPTIONS]
 
 Required Arguments:
-  -s STATIC_CONN_FILE       Static connections file with PLACEHOLDER
+  -i INPUT_FILE             Input file with connections and PLACEHOLDER
 
 Optional Arguments:
   -m MOUNT_POINT            Vault mount point (default: cloud)
@@ -88,14 +81,16 @@ Environment Variables:
   VAULT_SKIP_VERIFY         Skip SSL verification (default: false)
   DEBUG                     Enable debug mode (default: false)
 
-File Format:
-  #connection_label
-  oracle_logicalname=path/PLACEHOLDER
-  instance_logicalname:INSTANCENAME
-  (empty line)
+Input File Format:
+  oracle_name=PATH/PLACEHOLDER
+  instance_name:INSTANCENAME
+
+Output Format:
+  oracle_name=PATH/""PASSWORD""
+  instance_name:INSTANCENAME
 
 Example:
-  ./hvault_v3.sh -s static_connections.conf > output.conf
+  ./hvault_final.sh -i static_connections.conf
 
 EOF
     exit 1
@@ -118,13 +113,13 @@ validate_environment() {
 }
 
 validate_files() {
-    if [[ -z "$STATIC_CONN_FILE" ]]; then
-        log_error "Static connections file (-s) is required"
+    if [[ -z "$INPUT_FILE" ]]; then
+        log_error "Input file (-i) is required"
         usage
     fi
     
-    if [[ ! -f "$STATIC_CONN_FILE" ]]; then
-        log_error "File not found: $STATIC_CONN_FILE"
+    if [[ ! -f "$INPUT_FILE" ]]; then
+        log_error "File not found: $INPUT_FILE"
         exit 1
     fi
 }
@@ -140,7 +135,7 @@ fetch_password_from_vault() {
     local env="${instance: -2}"
     local key_path="${BASE_PATH}/${env}/${instance}"
     
-    log_debug "Fetching password for instance: $instance (path: $key_path)"
+    log_debug "Fetching password for instance: $instance"
     
     local curl_opts=(-s -S)
     [[ "$VAULT_SKIP_VERIFY" == "true" ]] && curl_opts+=(-k)
@@ -173,43 +168,36 @@ fetch_password_from_vault() {
 # EXTRACTION FUNCTIONS
 ################################################################################
 
-# Extract instance name from line like "instance_warehouse_gbr:Q143652DP10"
-extract_instance_from_mapping_line() {
+# Extract instance name from "instance_name:INSTANCENAME"
+extract_instance() {
     local line="$1"
     
-    # Format: instance_LOGICALNAME:INSTANCENAME
+    # Format: instance_XXX:INSTANCENAME
     # Extract everything after the colon
-    local instance
-    instance=$(echo "$line" | sed 's/.*://')
-    
-    [[ -z "$instance" ]] && return 1
-    echo "$instance"
+    echo "$line" | sed 's/.*://'
 }
 
-# Extract logical name from line like "instance_warehouse_gbr:Q143652DP10"
-extract_logical_name() {
+# Check if line is a connection line (contains oracle_ and /PLACEHOLDER)
+is_connection_line() {
     local line="$1"
     
-    # Format: instance_LOGICALNAME:INSTANCENAME
-    # Extract everything between "instance_" and ":"
-    local logical
-    logical=$(echo "$line" | sed 's/instance_//;s/:.*//')
-    
-    [[ -z "$logical" ]] && return 1
-    echo "$logical"
+    [[ "$line" =~ ^oracle_ ]] && [[ "$line" =~ /PLACEHOLDER$ ]]
 }
 
-# Replace PLACEHOLDER in connection line with actual password
-replace_placeholder_with_password() {
+# Check if line is an instance line
+is_instance_line() {
+    local line="$1"
+    
+    [[ "$line" =~ ^instance_[^:]+:[A-Z0-9]+$ ]]
+}
+
+# Replace /PLACEHOLDER with /""PASSWORD""
+inject_password() {
     local connection_line="$1"
     local password="$2"
     
-    # Escape special chars in password for sed
-    local escaped_password
-    escaped_password=$(printf '%s\n' "$password" | sed -e 's/[\/&]/\\&/g')
-    
-    # Replace /PLACEHOLDER with /PASSWORD
-    echo "$connection_line" | sed "s|/PLACEHOLDER|/$escaped_password|g"
+    # Replace /PLACEHOLDER with /""PASSWORD""
+    echo "$connection_line" | sed "s|/PLACEHOLDER|/\"\"${password}\"\"|"
 }
 
 ################################################################################
@@ -219,127 +207,97 @@ replace_placeholder_with_password() {
 process_file() {
     local file="$1"
     local line_num=0
-    local current_block=""
-    local block_lines=0
-    local connection_line=""
-    local instance_line=""
+    local pending_connection=""
+    local in_comment_section=false
     
     log_info "Processing file: $file"
     
     while IFS= read -r line || [[ -n "$line" ]]; do
         ((line_num++))
         
-        # Accumulate lines into block
+        log_debug "Line $line_num: $line"
+        
+        # Handle comment/header lines - output as-is
+        if [[ "$line" =~ ^# ]] || [[ "$line" =~ ^= ]]; then
+            log_debug "Line $line_num: Comment/header"
+            echo "$line"
+            in_comment_section=true
+            continue
+        fi
+        
+        # Empty lines in comment sections - output as-is
         if [[ -z "$line" ]]; then
-            # Empty line = end of block
-            if [[ -n "$connection_line" ]] && [[ -n "$instance_line" ]]; then
-                # Process the complete block
-                log_debug "Block complete at line $line_num"
-                
-                if process_block "$connection_line" "$instance_line"; then
-                    # Output entire block (will be done in process_block)
-                    true
-                else
-                    log_warn "Block processing failed at line $line_num"
-                fi
-            fi
-            
-            # Output the empty line
-            echo ""
-            
-            # Reset block variables
-            connection_line=""
-            instance_line=""
-            block_lines=0
-        else
-            # Non-empty line - add to block
-            
-            # Check if this is an instance mapping line
-            if [[ "$line" =~ ^instance_[^:]+:[^:]+$ ]]; then
-                log_debug "Line $line_num: Instance mapping line detected"
-                instance_line="$line"
-            elif [[ "$line" =~ ^oracle_[^=]+=.*/PLACEHOLDER$ ]]; then
-                log_debug "Line $line_num: Connection line detected"
-                connection_line="$line"
-            else
-                # Comment or other line - just output as-is
-                log_debug "Line $line_num: Comment/metadata line"
+            log_debug "Line $line_num: Empty line"
+            # Only output if in comment section
+            if [[ "$in_comment_section" == "true" ]]; then
                 echo "$line"
             fi
+            continue
         fi
+        
+        in_comment_section=false
+        
+        # Check if this is a connection line
+        if is_connection_line "$line"; then
+            log_debug "Line $line_num: Connection line detected"
+            pending_connection="$line"
+            continue
+        fi
+        
+        # Check if this is an instance line
+        if is_instance_line "$line"; then
+            log_debug "Line $line_num: Instance line detected"
+            
+            # We should have a pending connection
+            if [[ -z "$pending_connection" ]]; then
+                log_warn "Line $line_num: Instance line without connection line, skipping"
+                echo "$line"
+                continue
+            fi
+            
+            # Extract instance name
+            local instance
+            instance=$(extract_instance "$line")
+            log_debug "Extracted instance: $instance"
+            
+            # Fetch password
+            local password
+            if ! password=$(fetch_password_from_vault "$instance"); then
+                log_error "Line $line_num: Failed to fetch password for $instance"
+                # Output pending connection and instance as-is on error
+                echo "$pending_connection"
+                echo "$line"
+                ((FAIL_COUNT++))
+                pending_connection=""
+                continue
+            fi
+            
+            # Inject password into connection line
+            local updated_connection
+            updated_connection=$(inject_password "$pending_connection" "$password")
+            
+            log_success "Line $line_num: Password injected for instance $instance"
+            
+            # Output the pair (no empty line between them)
+            echo "$updated_connection"
+            echo "$line"
+            
+            ((SUCCESS_COUNT++))
+            pending_connection=""
+            continue
+        fi
+        
+        # Any other line - output as-is
+        log_debug "Line $line_num: Other line (metadata or comment)"
+        echo "$line"
         
     done < "$file"
     
-    # Handle last block if file doesn't end with empty line
-    if [[ -n "$connection_line" ]] && [[ -n "$instance_line" ]]; then
-        log_debug "Processing final block"
-        if process_block "$connection_line" "$instance_line"; then
-            true
-        else
-            log_warn "Final block processing failed"
-        fi
-    fi
-    
-    # Print summary
+    # Print summary to stderr
     echo "" >&2
     log_info "Processing Complete:"
-    log_success "  Blocks processed: $BLOCKS_PROCESSED"
-    [[ $BLOCKS_FAILED -gt 0 ]] && log_error "  Blocks failed: $BLOCKS_FAILED"
-}
-
-# Process a single block (connection line + instance line)
-process_block() {
-    local connection_line="$1"
-    local instance_line="$2"
-    
-    log_debug "=== Processing Block ==="
-    log_debug "Connection: $connection_line"
-    log_debug "Instance:   $instance_line"
-    
-    # Extract instance name
-    local instance
-    if ! instance=$(extract_instance_from_mapping_line "$instance_line"); then
-        log_error "Failed to extract instance from: $instance_line"
-        ((BLOCKS_FAILED++))
-        
-        # Output original lines as-is on error
-        echo "$connection_line"
-        echo "$instance_line"
-        return 1
-    fi
-    
-    # Extract logical name for logging
-    local logical_name
-    logical_name=$(extract_logical_name "$instance_line") || logical_name="unknown"
-    
-    log_info "Block: $logical_name → $instance"
-    
-    # Fetch password from Vault
-    local password
-    if ! password=$(fetch_password_from_vault "$instance"); then
-        log_error "Failed to fetch password for $instance"
-        ((BLOCKS_FAILED++))
-        
-        # Output original lines on error
-        echo "# [ERROR] Failed to fetch password for $instance"
-        echo "$connection_line"
-        echo "$instance_line"
-        return 1
-    fi
-    
-    # Replace PLACEHOLDER with password
-    local updated_connection
-    updated_connection=$(replace_placeholder_with_password "$connection_line" "$password")
-    
-    log_success "Password injected for: $logical_name"
-    log_debug "Updated: $updated_connection"
-    
-    # Output the updated block
-    echo "$updated_connection"
-    echo "$instance_line"
-    
-    ((BLOCKS_PROCESSED++))
-    return 0
+    log_success "  Successfully processed: $SUCCESS_COUNT connections"
+    [[ $FAIL_COUNT -gt 0 ]] && log_error "  Failed: $FAIL_COUNT connections"
 }
 
 ################################################################################
@@ -349,8 +307,8 @@ process_block() {
 main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -s)
-                STATIC_CONN_FILE="$2"
+            -i)
+                INPUT_FILE="$2"
                 shift 2
                 ;;
             -m)
@@ -375,12 +333,12 @@ main() {
     validate_files
     
     log_info "╔════════════════════════════════════════════════════╗"
-    log_info "║  hvault_v3.sh - Block-Based Password Injector     ║"
+    log_info "║  hvault_final.sh - Password Injector              ║"
     log_info "╚════════════════════════════════════════════════════╝"
     
-    process_file "$STATIC_CONN_FILE"
+    process_file "$INPUT_FILE"
     
-    if [[ $BLOCKS_FAILED -gt 0 ]]; then
+    if [[ $FAIL_COUNT -gt 0 ]]; then
         exit 1
     fi
     
